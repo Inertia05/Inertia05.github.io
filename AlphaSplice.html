@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Image Align + Replace + Mask Composer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel2: #1e232d;
+    --border: #313845;
+    --text: #e8ecf3;
+    --muted: #aab3c2;
+    --accent: #5aa2ff;
+    --good: #57c17b;
+    --warn: #f1b75a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  .hidden { display: none !important; }
+
+  .app {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    height: 100vh;
+  }
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow: auto;
+    padding: 14px;
+  }
+  .viewer {
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(45deg, #151922 25%, transparent 25%) -12px 0/24px 24px,
+      linear-gradient(-45deg, #151922 25%, transparent 25%) -12px 0/24px 24px,
+      linear-gradient(45deg, transparent 75%, #151922 75%) -12px 0/24px 24px,
+      linear-gradient(-45deg, transparent 75%, #151922 75%) -12px 0/24px 24px,
+      #11151d;
+  }
+  h1 { font-size: 22px; margin: 0 0 12px 0; }
+  h2 { font-size: 14px; margin: 0 0 10px 0; }
+  .group {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .row:last-child { margin-bottom: 0; }
+  label { font-size: 13px; color: var(--muted); }
+  input[type="file"] { width: 100%; color: var(--muted); }
+  input[type="range"] { width: 100%; }
+  input[type="number"], select {
+    background: #0f131b;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+  }
+  button {
+    background: #252b36;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  button:hover { border-color: #5a6578; }
+  button.active {
+    outline: 2px solid var(--accent);
+    background: #223247;
+  }
+  button.good {
+    background: #203627;
+    border-color: #335e42;
+  }
+  button.warn {
+    background: #3b311f;
+    border-color: #6a5736;
+  }
+  .small { font-size: 12px; color: var(--muted); }
+  .mono { font-family: Consolas, Menlo, monospace; font-size: 12px; }
+  .dropHint {
+    border: 1px dashed #5a6578;
+    border-radius: 10px;
+    padding: 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .status {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    background: rgba(0,0,0,0.65);
+    border: 1px solid #495364;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    white-space: pre-line;
+    pointer-events: none;
+  }
+  .canvasWrap {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
+    image-rendering: pixelated;
+  }
+  canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    image-rendering: pixelated;
+  }
+  #maskDataCanvas { display: none; }
+  .splitView {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .pane {
+    position: relative;
+    overflow: hidden;
+    border-left: 1px solid rgba(255,255,255,0.08);
+  }
+  .pane:first-child { border-left: none; }
+  .paneTitle {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    background: rgba(0,0,0,0.65);
+    border: 1px solid #495364;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    z-index: 3;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="step1" class="app">
+  <div class="sidebar">
+    <h1>Step 1 — Align</h1>
+
+    <div class="group">
+      <h2>Images</h2>
+      <div class="row">
+        <label for="step1AInput">Image A</label>
+        <input id="step1AInput" type="file" accept="image/*,.tga,.targa">
+      </div>
+      <div class="row">
+        <label for="step1BInput">Image B</label>
+        <input id="step1BInput" type="file" accept="image/*,.tga,.targa">
+      </div>
+      <div class="dropHint" id="dropZone1">
+        Drag two image files here.
+        <div class="small">Supports PNG and common 8-bit indexed / 24-bit / 32-bit TGA.</div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Base / Overlay</h2>
+      <div class="row">
+        <label for="baseSelect">Base image</label>
+        <select id="baseSelect">
+          <option value="A">A as base</option>
+          <option value="B">B as base</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="fitStep1Btn">Fit to screen</button>
+        <button id="actualStep1Btn">100%</button>
+      </div>
+      <div class="row">
+        <label for="overlayOpacity">Overlay opacity</label>
+        <input id="overlayOpacity" type="range" min="0" max="100" value="55">
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Overlay transform</h2>
+      <div class="row">
+        <label for="overlayScale">Scale</label>
+        <input id="overlayScale" type="range" min="10" max="400" value="100">
+      </div>
+      <div class="row">
+        <button id="scaleDownBtn">-</button>
+        <button id="scaleUpBtn">+</button>
+        <button id="resetTransformBtn">Reset overlay transform</button>
+      </div>
+      <div class="row small">
+        Drag overlay with left mouse. Use mouse wheel to zoom view. Hold <span class="mono">Space</span> or right-drag to pan view.
+      </div>
+      <div class="row small">
+        Only the overlay image is transformed here. The base image stays fixed.
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Next</h2>
+      <div class="row">
+        <button id="rectReplaceBtn" class="good">Confirm → Rectangular Replace</button>
+      </div>
+      <div class="row">
+        <button id="toMaskBtn" class="warn">Confirm → Open Mask Editor</button>
+      </div>
+      <div class="row small">
+        Rectangular Replace: the aligned overlay image is written into the base image inside its rectangular footprint. Full RGBA is copied. No alpha blending.
+      </div>
+      <div class="row small">
+        Open Mask Editor: base image and aligned overlay image are sent to the mask tool. If overlay is larger than base, it is clipped to base size first.
+      </div>
+    </div>
+  </div>
+
+  <div class="viewer" id="viewer1">
+    <div class="canvasWrap" id="canvasWrap1">
+      <canvas id="baseCanvas1"></canvas>
+      <canvas id="overlayCanvas1"></canvas>
+      <canvas id="interactionCanvas1"></canvas>
+    </div>
+    <div class="status" id="status1">Load Image A and Image B</div>
+  </div>
+</div>
+
+<div id="step2" class="app hidden">
+  <div class="sidebar">
+    <h1>Step 2 — Mask Editor</h1>
+
+    <div class="group">
+      <h2>Session</h2>
+      <div class="row small">
+        Base image is the background reference. Overlay image is the aligned and clipped second image.
+      </div>
+      <div class="row">
+        <button id="backToStep1Btn">Back to align step</button>
+        <button id="fitStep2Btn">Fit to screen</button>
+        <button id="actualStep2Btn">100%</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>View</h2>
+      <div class="row">
+        <label for="bgMode2">Background</label>
+        <select id="bgMode2">
+          <option value="BASE">Base image</option>
+          <option value="OVERLAY">Overlay image</option>
+          <option value="RESULT">Result preview</option>
+          <option value="NONE">None</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="maskTint2">Mask overlay opacity (Base/Overlay view only)</label>
+        <input id="maskTint2" type="range" min="0" max="100" value="45">
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Paint</h2>
+      <div class="row">
+        <button id="brushBtn2" class="active">Brush (True)</button>
+        <button id="eraserBtn2">Eraser (False)</button>
+      </div>
+      <div class="row">
+        <label for="brushSize2">Brush size</label>
+        <input id="brushSize2" type="range" min="1" max="256" value="24">
+      </div>
+      <div class="row">
+        <button id="undoBtn2">Undo</button>
+        <button id="clearBtn2">Clear mask</button>
+        <button id="fillBtn2">Fill mask</button>
+      </div>
+      <div class="row small">
+        Result rule: mask=true uses overlay pixel RGBA. mask=false uses base pixel RGBA.
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Border Fill</h2>
+      <div class="row">
+        <label for="borderImageInput">Border image</label>
+        <input id="borderImageInput" type="file" accept="image/*,.tga,.targa">
+      </div>
+      <div class="row">
+        <label for="borderChannel">Channel</label>
+        <select id="borderChannel">
+          <option value="R">Red</option>
+          <option value="G">Green</option>
+          <option value="B">Blue</option>
+        </select>
+        <label><input id="borderInvert" type="checkbox"> Invert</label>
+      </div>
+      <div class="row">
+        <label for="borderThreshold">Threshold</label>
+        <input id="borderThreshold" type="range" min="1" max="254" value="128" style="width:100px">
+      </div>
+      <div class="row">
+        <button id="extractBorderBtn">Extract</button>
+        <button id="recheckBorderBtn">Verify closed</button>
+        <button id="clearBorderBtn">Clear border</button>
+      </div>
+      <div class="row">
+        <span id="borderStatus" class="small">No border loaded.</span>
+      </div>
+      <div class="row">
+        <button id="toggleBorderOverlay">Border overlay: ON</button>
+      </div>
+      <div class="row">
+        <label class="small">Border</label><input id="colorBorder" type="color" value="#00ff00">
+        <label class="small">Fill</label><input id="colorFill" type="color" value="#508cff">
+        <label class="small">Interior</label><input id="colorInterior" type="color" value="#ffdc00">
+      </div>
+      <div class="row">
+        <button id="borderPatchBtn">Patch brush</button>
+        <button id="borderFloodFillBtn">Flood fill</button>
+        <span id="expandShrinkControls" class="hidden" style="display:none;gap:4px;align-items:center">
+          <button id="shrinkFillBtn">-</button>
+          <input id="expandRadius" type="number" min="1" max="128" value="3" style="width:50px">
+          <button id="expandFillBtn">+</button>
+        </span>
+      </div>
+      <div class="row">
+        <button id="applyBorderFillBtn" class="good">Apply fill → Mask</button>
+        <button id="clearFillBtn">Clear fill</button>
+      </div>
+      <div class="row small">
+        Patch: draw on border to close gaps. Flood fill: click inside border. Expand/Shrink: morphological dilate/erode along boundary normals. Apply: OR merge into mask.
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Export</h2>
+      <div class="row">
+        <button id="exportMaskBtn2">Export mask PNG</button>
+        <button id="exportResultBtn2">Export result PNG</button>
+      </div>
+      <div class="row small">
+        Mask export: white=true, black=false
+      </div>
+    </div>
+  </div>
+
+  <div class="viewer" id="viewer2">
+    <div class="splitView">
+      <div class="pane" id="paneEdit">
+        <div class="paneTitle">Edit View</div>
+        <div class="canvasWrap" id="canvasWrap2Edit">
+          <canvas id="bgCanvas2"></canvas>
+          <canvas id="interactionCanvas2"></canvas>
+        </div>
+      </div>
+      <div class="pane" id="paneResult">
+        <div class="paneTitle">Live Result — <button id="toggleAlphaView" style="font-size:11px;padding:2px 6px;border-radius:6px;cursor:pointer;background:#252b36;color:var(--text);border:1px solid var(--border);pointer-events:auto">RGBA</button></div>
+        <div class="canvasWrap" id="canvasWrap2Result">
+          <canvas id="resultCanvas2"></canvas>
+        </div>
+      </div>
+    </div>
+    <canvas id="maskDataCanvas"></canvas>
+    <div class="status" id="status2">Mask editor</div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const state = {
+    imgA: null,
+    imgB: null,
+    baseKey: 'A',
+    align: { scale: 1, x: 0, y: 0 },
+    view1: { scale: 1, x: 0, y: 0 },
+    view2: { scale: 1, x: 0, y: 0 },
+    prepared: { baseCanvas: null, overlayCanvas: null, width: 0, height: 0 },
+    step2: {
+      tool: 'brush', brushSize: 24, undoStack: [],
+      borderFill: {
+        sourceImage: null, channel: 'R', threshold: 128,
+        borderData: null, borderCanvas: null, borderCtx: null,
+        isClosed: null, interiorData: null, interiorCount: 0,
+        fillResultData: null, showBorder: true, borderUndoStack: []
+      }
+    },
+    draggingOverlay: false,
+    panning1: false,
+    panning2: false,
+    spaceDown: false
+  };
+
+  // ----- Element refs -----
+  const step1El = document.getElementById('step1');
+  const step2El = document.getElementById('step2');
+
+  const step1AInput = document.getElementById('step1AInput');
+  const step1BInput = document.getElementById('step1BInput');
+  const dropZone1 = document.getElementById('dropZone1');
+  const baseSelect = document.getElementById('baseSelect');
+  const overlayOpacity = document.getElementById('overlayOpacity');
+  const overlayScaleEl = document.getElementById('overlayScale');
+  const fitStep1Btn = document.getElementById('fitStep1Btn');
+  const actualStep1Btn = document.getElementById('actualStep1Btn');
+  const scaleDownBtn = document.getElementById('scaleDownBtn');
+  const scaleUpBtn = document.getElementById('scaleUpBtn');
+  const resetTransformBtn = document.getElementById('resetTransformBtn');
+  const rectReplaceBtn = document.getElementById('rectReplaceBtn');
+  const toMaskBtn = document.getElementById('toMaskBtn');
+  const viewer1 = document.getElementById('viewer1');
+  const canvasWrap1 = document.getElementById('canvasWrap1');
+  const baseCanvas1 = document.getElementById('baseCanvas1');
+  const overlayCanvas1 = document.getElementById('overlayCanvas1');
+  const interactionCanvas1 = document.getElementById('interactionCanvas1');
+  const status1 = document.getElementById('status1');
+
+  const bgCtx1 = baseCanvas1.getContext('2d');
+  const ovCtx1 = overlayCanvas1.getContext('2d');
+  const interCtx1 = interactionCanvas1.getContext('2d');
+
+  const backToStep1Btn = document.getElementById('backToStep1Btn');
+  const fitStep2Btn = document.getElementById('fitStep2Btn');
+  const actualStep2Btn = document.getElementById('actualStep2Btn');
+  const bgMode2 = document.getElementById('bgMode2');
+  const maskTint2 = document.getElementById('maskTint2');
+  const brushBtn2 = document.getElementById('brushBtn2');
+  const eraserBtn2 = document.getElementById('eraserBtn2');
+  const brushSize2El = document.getElementById('brushSize2');
+  const undoBtn2 = document.getElementById('undoBtn2');
+  const clearBtn2 = document.getElementById('clearBtn2');
+  const fillBtn2 = document.getElementById('fillBtn2');
+  const exportMaskBtn2 = document.getElementById('exportMaskBtn2');
+  const exportResultBtn2 = document.getElementById('exportResultBtn2');
+  const paneEdit = document.getElementById('paneEdit');
+  const paneResult = document.getElementById('paneResult');
+  const canvasWrap2Edit = document.getElementById('canvasWrap2Edit');
+  const canvasWrap2Result = document.getElementById('canvasWrap2Result');
+  const bgCanvas2 = document.getElementById('bgCanvas2');
+  const interactionCanvas2 = document.getElementById('interactionCanvas2');
+  const resultCanvas2 = document.getElementById('resultCanvas2');
+  const maskDataCanvas = document.getElementById('maskDataCanvas');
+  const status2 = document.getElementById('status2');
+
+  const colorBorderEl = document.getElementById('colorBorder');
+  const colorFillEl = document.getElementById('colorFill');
+  const colorInteriorEl = document.getElementById('colorInterior');
+  const borderImageInput = document.getElementById('borderImageInput');
+  const borderChannelEl = document.getElementById('borderChannel');
+  const borderThresholdEl = document.getElementById('borderThreshold');
+  const extractBorderBtn = document.getElementById('extractBorderBtn');
+  const clearBorderBtn = document.getElementById('clearBorderBtn');
+  const borderStatusEl = document.getElementById('borderStatus');
+  const toggleBorderOverlay = document.getElementById('toggleBorderOverlay');
+  const borderPatchBtn = document.getElementById('borderPatchBtn');
+  const borderFloodFillBtn = document.getElementById('borderFloodFillBtn');
+  const applyBorderFillBtn = document.getElementById('applyBorderFillBtn');
+  const clearFillBtn = document.getElementById('clearFillBtn');
+
+  const bgCtx2 = bgCanvas2.getContext('2d', { willReadFrequently: true });
+  const interCtx2 = interactionCanvas2.getContext('2d');
+  const resultCtx2 = resultCanvas2.getContext('2d', { willReadFrequently: true });
+  const maskDataCtx = maskDataCanvas.getContext('2d', { willReadFrequently: true });
+
+  // ----- Helpers -----
+  function getBaseImage() { return state.baseKey === 'A' ? state.imgA : state.imgB; }
+  function getOverlayImage() { return state.baseKey === 'A' ? state.imgB : state.imgA; }
+
+  function resetAlignTransform() {
+    state.align.scale = 1; state.align.x = 0; state.align.y = 0;
+    overlayScaleEl.value = '100';
+  }
+
+  function bgClear(canvas) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); }
+
+  function updateStatus1(extra) {
+    const base = getBaseImage();
+    const overlay = getOverlayImage();
+    const lines = [
+      `Base: ${state.baseKey}`,
+      `View zoom: ${(state.view1.scale * 100).toFixed(1)}%`,
+      `Overlay scale: ${(state.align.scale * 100).toFixed(1)}%`,
+      `Overlay offset: (${Math.round(state.align.x)}, ${Math.round(state.align.y)})`
+    ];
+    if (base) lines.push(`Base size: ${base.width} × ${base.height}`);
+    if (overlay) lines.push(`Overlay size: ${overlay.width} × ${overlay.height}`);
+    if (extra) lines.push(extra);
+    status1.textContent = lines.join('\n');
+  }
+
+  function updateStatus2(extra) {
+    const lines = [
+      `Canvas: ${state.prepared.width} × ${state.prepared.height}`,
+      `View zoom: ${(state.view2.scale * 100).toFixed(1)}%`,
+      `Background: ${bgMode2.value === 'RESULT' ? 'Result preview' : bgMode2.value}`,
+      `Tool: ${{brush:'Brush(True)', eraser:'Eraser(False)', borderPatch:'Border Patch', borderFloodFill:'Border Flood Fill'}[state.step2.tool] || state.step2.tool}`,
+      `Brush: ${state.step2.brushSize}px`
+    ];
+    if (extra) lines.push(extra);
+    status2.textContent = lines.join('\n');
+  }
+
+  // ----- Step 1 view -----
+  function applyView1() { applyViewTransform(canvasWrap1, state.view1); updateStatus1(); }
+  function applyView2() {
+    applyViewTransform(canvasWrap2Edit, state.view2);
+    applyViewTransform(canvasWrap2Result, state.view2);
+    updateStatus2();
+  }
+
+  function doFitView1() {
+    const base = getBaseImage(); if (!base) return;
+    fitView(state.view1, viewer1, base.width, base.height);
+    applyView1();
+  }
+  function doActualView1() {
+    const base = getBaseImage(); if (!base) return;
+    actualView(state.view1, viewer1, base.width, base.height);
+    applyView1();
+  }
+  function doFitView2() {
+    const w = state.prepared.width, h = state.prepared.height;
+    if (!w || !h) return;
+    fitView(state.view2, paneEdit, w, h);
+    applyView2();
+  }
+  function doActualView2() {
+    const w = state.prepared.width, h = state.prepared.height;
+    if (!w || !h) return;
+    actualView(state.view2, paneEdit, w, h);
+    applyView2();
+  }
+
+  // ----- Step 1 drawing -----
+  function setStep1CanvasSizes() {
+    const base = getBaseImage(); if (!base) return;
+    [baseCanvas1, overlayCanvas1, interactionCanvas1].forEach(c => setCanvasSize(c, base.width, base.height));
+    setWrapSize(canvasWrap1, base.width, base.height);
+  }
+
+  function redrawStep1() {
+    const base = getBaseImage();
+    const overlay = getOverlayImage();
+    if (!base) return;
+    setStep1CanvasSizes();
+    bgClear(baseCanvas1); bgClear(overlayCanvas1); bgClear(interactionCanvas1);
+    bgCtx1.drawImage(base, 0, 0, base.width, base.height);
+    if (overlay) {
+      ovCtx1.save();
+      ovCtx1.globalAlpha = Number(overlayOpacity.value) / 100;
+      ovCtx1.translate(state.align.x, state.align.y);
+      ovCtx1.scale(state.align.scale, state.align.scale);
+      ovCtx1.drawImage(overlay, 0, 0);
+      ovCtx1.restore();
+      interCtx1.save();
+      interCtx1.strokeStyle = 'rgba(90,162,255,0.95)';
+      interCtx1.lineWidth = 1;
+      interCtx1.strokeRect(state.align.x + 0.5, state.align.y + 0.5, overlay.width * state.align.scale, overlay.height * state.align.scale);
+      interCtx1.restore();
+    }
+    updateStatus1();
+  }
+
+  // ----- Preparation -----
+  function buildPreparedCanvases() {
+    const base = getBaseImage();
+    const overlay = getOverlayImage();
+    if (!base || !overlay) { alert('Load both images first.'); return false; }
+
+    const bc = document.createElement('canvas');
+    bc.width = base.width; bc.height = base.height;
+    bc.getContext('2d').drawImage(base, 0, 0);
+
+    const oc = document.createElement('canvas');
+    oc.width = base.width; oc.height = base.height;
+    const octx = oc.getContext('2d');
+    octx.clearRect(0, 0, oc.width, oc.height);
+    octx.save();
+    octx.translate(state.align.x, state.align.y);
+    octx.scale(state.align.scale, state.align.scale);
+    octx.drawImage(overlay, 0, 0);
+    octx.restore();
+
+    state.prepared.baseCanvas = bc;
+    state.prepared.overlayCanvas = oc;
+    state.prepared.width = base.width;
+    state.prepared.height = base.height;
+    return true;
+  }
+
+  function buildRectReplaceResult() {
+    const bc = state.prepared.baseCanvas, oc = state.prepared.overlayCanvas;
+    if (!bc || !oc) return null;
+    const w = state.prepared.width, h = state.prepared.height;
+    const baseData = bc.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+    const overlayData = oc.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = w; outCanvas.height = h;
+    const outCtx = outCanvas.getContext('2d');
+    const out = outCtx.createImageData(w, h);
+    const B = baseData.data, O = overlayData.data, D = out.data;
+    for (let i = 0; i < D.length; i += 4) {
+      const hasOverlay = O[i+3] !== 0 || O[i] !== 0 || O[i+1] !== 0 || O[i+2] !== 0;
+      if (hasOverlay) { D[i]=O[i]; D[i+1]=O[i+1]; D[i+2]=O[i+2]; D[i+3]=O[i+3]; }
+      else { D[i]=B[i]; D[i+1]=B[i+1]; D[i+2]=B[i+2]; D[i+3]=B[i+3]; }
+    }
+    outCtx.putImageData(out, 0, 0);
+    return outCanvas;
+  }
+
+  function gotoStep2() {
+    if (!buildPreparedCanvases()) return;
+    const w = state.prepared.width, h = state.prepared.height;
+    [bgCanvas2, interactionCanvas2, resultCanvas2, maskDataCanvas].forEach(c => setCanvasSize(c, w, h));
+    setWrapSize(canvasWrap2Edit, w, h);
+    setWrapSize(canvasWrap2Result, w, h);
+    clearMaskData(maskDataCtx, w, h, false);
+    state.step2.undoStack = [];
+    redrawStep2All();
+    step1El.classList.add('hidden');
+    step2El.classList.remove('hidden');
+    doFitView2();
+  }
+
+  // ----- Step 2 mask editor -----
+  function getResultImageData2() {
+    const w = state.prepared.width, h = state.prepared.height;
+    const baseData = state.prepared.baseCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+    const overlayData = state.prepared.overlayCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+    const maskData = maskDataCtx.getImageData(0, 0, w, h);
+    return compositeImageData(overlayData, baseData, maskData, w, h);
+  }
+
+  function redrawStep2Edit() {
+    const w = state.prepared.width, h = state.prepared.height;
+    bgCtx2.clearRect(0, 0, w, h);
+    if (bgMode2.value === 'BASE') bgCtx2.drawImage(state.prepared.baseCanvas, 0, 0);
+    else if (bgMode2.value === 'OVERLAY') bgCtx2.drawImage(state.prepared.overlayCanvas, 0, 0);
+    else if (bgMode2.value === 'RESULT') bgCtx2.putImageData(getResultImageData2(), 0, 0);
+    if (bgMode2.value !== 'RESULT') {
+      drawMaskTintOverlay(bgCtx2, maskDataCtx, w, h, Number(maskTint2.value) / 100);
+    }
+    const bf = state.step2.borderFill;
+    if (bf.showBorder && bf.borderData) {
+      drawBorderOverlay(bgCtx2, bf.borderData, bf.fillResultData, bf.interiorData, w, h, {
+        border: colorBorderEl.value, fill: colorFillEl.value, interior: colorInteriorEl.value
+      });
+    }
+  }
+
+  let resultShowAlpha = false;
+
+  function redrawStep2Result() {
+    const imgData = getResultImageData2();
+    if (resultShowAlpha) {
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        d[i] = a; d[i + 1] = a; d[i + 2] = a; d[i + 3] = 255;
+      }
+    }
+    resultCtx2.putImageData(imgData, 0, 0);
+  }
+
+  function redrawStep2All() {
+    redrawStep2Edit();
+    redrawStep2Result();
+    updateStatus2();
+  }
+
+  // ----- Events Step 1 -----
+  async function loadToSlot(file, slot) {
+    const img = await readImageFile(file);
+    if (slot === 'A') state.imgA = img;
+    if (slot === 'B') state.imgB = img;
+    redrawStep1();
+    doFitView1();
+  }
+
+  step1AInput.addEventListener('change', async e => { const f = e.target.files[0]; if (f) await loadToSlot(f, 'A'); });
+  step1BInput.addEventListener('change', async e => { const f = e.target.files[0]; if (f) await loadToSlot(f, 'B'); });
+
+  setupDropZone(dropZone1, viewer1, '#5aa2ff', async files => {
+    if (files[0]) await loadToSlot(files[0], 'A');
+    if (files[1]) await loadToSlot(files[1], 'B');
+  });
+
+  baseSelect.addEventListener('change', () => {
+    state.baseKey = baseSelect.value;
+    resetAlignTransform();
+    redrawStep1();
+    doFitView1();
+  });
+  overlayOpacity.addEventListener('input', redrawStep1);
+  overlayScaleEl.addEventListener('input', () => {
+    state.align.scale = Number(overlayScaleEl.value) / 100;
+    redrawStep1();
+  });
+  fitStep1Btn.addEventListener('click', doFitView1);
+  actualStep1Btn.addEventListener('click', doActualView1);
+  scaleDownBtn.addEventListener('click', () => {
+    state.align.scale = clamp(state.align.scale / 1.05, 0.1, 4);
+    overlayScaleEl.value = String(Math.round(state.align.scale * 100));
+    redrawStep1();
+  });
+  scaleUpBtn.addEventListener('click', () => {
+    state.align.scale = clamp(state.align.scale * 1.05, 0.1, 4);
+    overlayScaleEl.value = String(Math.round(state.align.scale * 100));
+    redrawStep1();
+  });
+  resetTransformBtn.addEventListener('click', () => { resetAlignTransform(); redrawStep1(); });
+
+  rectReplaceBtn.addEventListener('click', () => {
+    if (!buildPreparedCanvases()) return;
+    const out = buildRectReplaceResult();
+    if (out) downloadCanvas(out, 'rectangular_replace_result.png');
+  });
+  toMaskBtn.addEventListener('click', gotoStep2);
+
+  // Step 1 overlay drag
+  let lastOverlayDrag = null;
+  interactionCanvas1.addEventListener('mousedown', e => {
+    const base = getBaseImage(), overlay = getOverlayImage();
+    if (!base || !overlay) return;
+    if (state.spaceDown || e.button === 2) {
+      state.panning1 = true;
+      state.panStart1 = { x: e.clientX, y: e.clientY, ox: state.view1.x, oy: state.view1.y };
+      return;
+    }
+    if (e.button !== 0) return;
+    const p = screenToWorld(e.clientX, e.clientY, viewer1, state.view1);
+    const r = { x: state.align.x, y: state.align.y, w: overlay.width * state.align.scale, h: overlay.height * state.align.scale };
+    if (p.x >= r.x && p.y >= r.y && p.x <= r.x + r.w && p.y <= r.y + r.h) {
+      state.draggingOverlay = true;
+      lastOverlayDrag = { x: p.x, y: p.y, ox: state.align.x, oy: state.align.y };
+    }
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (state.panning1) {
+      state.view1.x = state.panStart1.ox + (e.clientX - state.panStart1.x);
+      state.view1.y = state.panStart1.oy + (e.clientY - state.panStart1.y);
+      applyView1();
+      return;
+    }
+    if (state.draggingOverlay && lastOverlayDrag) {
+      const p = screenToWorld(e.clientX, e.clientY, viewer1, state.view1);
+      state.align.x = lastOverlayDrag.ox + (p.x - lastOverlayDrag.x);
+      state.align.y = lastOverlayDrag.oy + (p.y - lastOverlayDrag.y);
+      redrawStep1();
+    }
+  });
+
+  window.addEventListener('mouseup', () => { state.draggingOverlay = false; state.panning1 = false; });
+
+  setupPanZoom({
+    viewerEl: viewer1,
+    getView: () => state.view1,
+    applyTransform: applyView1,
+    minScale: 0.05, maxScale: 16
+  });
+
+  // ----- Tool switching -----
+  function clearAllToolActive() {
+    brushBtn2.classList.remove('active');
+    eraserBtn2.classList.remove('active');
+    borderPatchBtn.classList.remove('active');
+    borderFloodFillBtn.classList.remove('active');
+  }
+  function selectTool(toolName, btn) {
+    clearAllToolActive();
+    state.step2.tool = toolName;
+    if (btn) btn.classList.add('active');
+    const esc = document.getElementById('expandShrinkControls');
+    if (toolName === 'borderFloodFill') { esc.classList.remove('hidden'); esc.style.display = 'inline-flex'; }
+    else { esc.classList.add('hidden'); esc.style.display = 'none'; }
+    updateStatus2();
+  }
+
+  // ----- Border fill helpers -----
+  function syncBorderCanvas() {
+    const bf = state.step2.borderFill;
+    const w = state.prepared.width, h = state.prepared.height;
+    if (!bf.borderCanvas) {
+      bf.borderCanvas = document.createElement('canvas');
+      bf.borderCanvas.width = w; bf.borderCanvas.height = h;
+      bf.borderCtx = bf.borderCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    const img = bf.borderCtx.createImageData(w, h);
+    const d = img.data;
+    for (let i = 0; i < w * h; i++) {
+      const v = bf.borderData[i] ? 255 : 0;
+      d[i*4] = v; d[i*4+1] = v; d[i*4+2] = v; d[i*4+3] = 255;
+    }
+    bf.borderCtx.putImageData(img, 0, 0);
+  }
+
+  function syncBorderDataFromCanvas() {
+    const bf = state.step2.borderFill;
+    const w = state.prepared.width, h = state.prepared.height;
+    const imgData = bf.borderCtx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    for (let i = 0; i < w * h; i++) {
+      bf.borderData[i] = d[i*4] >= 128 ? 1 : 0;
+    }
+  }
+
+  function updateBorderStatus(msg) {
+    if (msg) { borderStatusEl.textContent = msg; return; }
+    const bf = state.step2.borderFill;
+    if (!bf.borderData) { borderStatusEl.textContent = 'No border loaded.'; return; }
+    if (bf.isClosed === null) borderStatusEl.textContent = 'Border extracted. Click Extract & Check to verify.';
+    else if (bf.isClosed) borderStatusEl.textContent = `Border is CLOSED (${bf.interiorCount} interior px). Ready to flood fill.`;
+    else borderStatusEl.textContent = `NOT closed (${bf.interiorCount} interior px < 1%). Use Patch brush to close gaps.`;
+  }
+
+  function extractBorder() {
+    const bf = state.step2.borderFill;
+    if (!bf.sourceImage) { alert('Load a border image first.'); return; }
+    const w = state.prepared.width, h = state.prepared.height;
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tmpCtx = tmp.getContext('2d', { willReadFrequently: true });
+    tmpCtx.drawImage(bf.sourceImage, 0, 0, w, h);
+    const imgData = tmpCtx.getImageData(0, 0, w, h);
+    bf.channel = borderChannelEl.value;
+    bf.threshold = parseInt(borderThresholdEl.value, 10);
+    bf.borderData = extractChannelBinary(imgData, w, h, bf.channel, bf.threshold);
+    if (document.getElementById('borderInvert').checked) {
+      for (let i = 0; i < bf.borderData.length; i++) bf.borderData[i] = bf.borderData[i] ? 0 : 1;
+    }
+    syncBorderCanvas();
+    const result = checkBorderClosed(bf.borderData, w, h);
+    bf.isClosed = result.closed;
+    bf.interiorData = result.interior;
+    bf.interiorCount = result.interiorCount;
+    bf.fillResultData = null;
+    updateBorderStatus();
+    redrawStep2All();
+  }
+
+  function doClearBorder() {
+    const bf = state.step2.borderFill;
+    bf.sourceImage = null; bf.borderData = null; bf.borderCanvas = null;
+    bf.borderCtx = null; bf.isClosed = null; bf.interiorData = null;
+    bf.interiorCount = 0; bf.fillResultData = null; bf.borderUndoStack = [];
+    borderImageInput.value = '';
+    updateBorderStatus();
+    if (state.step2.tool === 'borderPatch' || state.step2.tool === 'borderFloodFill') {
+      selectTool('brush', brushBtn2);
+    }
+    redrawStep2All();
+  }
+
+  function doApplyBorderFill() {
+    const bf = state.step2.borderFill;
+    if (!bf.fillResultData) { alert('No fill result to apply.'); return; }
+    const w = state.prepared.width, h = state.prepared.height;
+    pushMaskUndo(state.step2.undoStack, maskDataCtx, w, h);
+    mergeBinaryToMask(maskDataCtx, bf.fillResultData, w, h);
+    // Clear transient state but keep sourceImage + extracted border
+    bf.isClosed = null; bf.interiorData = null; bf.interiorCount = 0;
+    bf.fillResultData = null; bf.borderUndoStack = [];
+    if (state.step2.tool === 'borderPatch' || state.step2.tool === 'borderFloodFill') {
+      selectTool('brush', brushBtn2);
+    }
+    updateBorderStatus('Fill applied to mask.');
+    redrawStep2All();
+  }
+
+  // ----- Events Step 2 -----
+  const toggleAlphaView = document.getElementById('toggleAlphaView');
+  toggleAlphaView.addEventListener('click', () => {
+    resultShowAlpha = !resultShowAlpha;
+    toggleAlphaView.textContent = resultShowAlpha ? 'Alpha' : 'RGBA';
+    redrawStep2Result();
+  });
+
+  backToStep1Btn.addEventListener('click', () => {
+    step2El.classList.add('hidden');
+    step1El.classList.remove('hidden');
+    doFitView1();
+  });
+  fitStep2Btn.addEventListener('click', doFitView2);
+  actualStep2Btn.addEventListener('click', doActualView2);
+
+  bgMode2.addEventListener('change', redrawStep2All);
+  maskTint2.addEventListener('input', redrawStep2All);
+
+  brushBtn2.addEventListener('click', () => { selectTool('brush', brushBtn2); redrawStep2All(); });
+  eraserBtn2.addEventListener('click', () => { selectTool('eraser', eraserBtn2); redrawStep2All(); });
+  brushSize2El.addEventListener('input', () => { state.step2.brushSize = parseInt(brushSize2El.value, 10); updateStatus2(); });
+
+  undoBtn2.addEventListener('click', () => {
+    if (state.step2.tool === 'borderPatch') {
+      const bf = state.step2.borderFill;
+      if (bf.borderCtx && popMaskUndo(bf.borderUndoStack, bf.borderCtx)) {
+        syncBorderDataFromCanvas();
+        bf.isClosed = null;
+        redrawStep2All();
+      }
+    } else if (popMaskUndo(state.step2.undoStack, maskDataCtx)) redrawStep2All();
+  });
+  clearBtn2.addEventListener('click', () => {
+    pushMaskUndo(state.step2.undoStack, maskDataCtx, state.prepared.width, state.prepared.height);
+    clearMaskData(maskDataCtx, state.prepared.width, state.prepared.height, false);
+    redrawStep2All();
+  });
+  fillBtn2.addEventListener('click', () => {
+    pushMaskUndo(state.step2.undoStack, maskDataCtx, state.prepared.width, state.prepared.height);
+    clearMaskData(maskDataCtx, state.prepared.width, state.prepared.height, true);
+    redrawStep2All();
+  });
+  exportMaskBtn2.addEventListener('click', () => exportMaskPNG(maskDataCtx, state.prepared.width, state.prepared.height, 'mask.png'));
+  exportResultBtn2.addEventListener('click', () => {
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = state.prepared.width; outCanvas.height = state.prepared.height;
+    outCanvas.getContext('2d').putImageData(getResultImageData2(), 0, 0);
+    downloadCanvas(outCanvas, 'result.png');
+  });
+
+  // ----- Border fill events -----
+  borderImageInput.addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    state.step2.borderFill.sourceImage = await readImageFile(f);
+    updateBorderStatus('Border image loaded. Click Extract & Check.');
+  });
+  const recheckBorderBtn = document.getElementById('recheckBorderBtn');
+  extractBorderBtn.addEventListener('click', extractBorder);
+  recheckBorderBtn.addEventListener('click', () => {
+    const bf = state.step2.borderFill;
+    if (!bf.borderData) { alert('Extract border first.'); return; }
+    const w = state.prepared.width, h = state.prepared.height;
+    const result = checkBorderClosed(bf.borderData, w, h);
+    bf.isClosed = result.closed;
+    bf.interiorData = result.interior;
+    bf.interiorCount = result.interiorCount;
+    updateBorderStatus();
+    redrawStep2All();
+  });
+  clearBorderBtn.addEventListener('click', doClearBorder);
+  toggleBorderOverlay.addEventListener('click', () => {
+    const bf = state.step2.borderFill;
+    bf.showBorder = !bf.showBorder;
+    toggleBorderOverlay.textContent = `Border overlay: ${bf.showBorder ? 'ON' : 'OFF'}`;
+    redrawStep2All();
+  });
+  colorBorderEl.addEventListener('input', redrawStep2All);
+  colorFillEl.addEventListener('input', redrawStep2All);
+  colorInteriorEl.addEventListener('input', redrawStep2All);
+  borderPatchBtn.addEventListener('click', () => {
+    if (!state.step2.borderFill.borderData) { alert('Extract border first.'); return; }
+    selectTool('borderPatch', borderPatchBtn);
+  });
+  borderFloodFillBtn.addEventListener('click', () => {
+    if (!state.step2.borderFill.borderData) { alert('Extract border first.'); return; }
+    selectTool('borderFloodFill', borderFloodFillBtn);
+  });
+  const expandRadiusEl = document.getElementById('expandRadius');
+  const expandFillBtn = document.getElementById('expandFillBtn');
+  const shrinkFillBtn = document.getElementById('shrinkFillBtn');
+
+  expandFillBtn.addEventListener('click', () => {
+    const bf = state.step2.borderFill;
+    if (!bf.fillResultData) { alert('No fill result to expand. Flood fill first.'); return; }
+    const r = parseInt(expandRadiusEl.value, 10) || 1;
+    const w = state.prepared.width, h = state.prepared.height;
+    bf.fillResultData = morphDilate(bf.fillResultData, w, h, r);
+    updateBorderStatus(`Fill expanded by ${r}px.`);
+    redrawStep2All();
+  });
+
+  shrinkFillBtn.addEventListener('click', () => {
+    const bf = state.step2.borderFill;
+    if (!bf.fillResultData) { alert('No fill result to shrink. Flood fill first.'); return; }
+    const r = parseInt(expandRadiusEl.value, 10) || 1;
+    const w = state.prepared.width, h = state.prepared.height;
+    bf.fillResultData = morphErode(bf.fillResultData, w, h, r);
+    updateBorderStatus(`Fill shrunk by ${r}px.`);
+    redrawStep2All();
+  });
+
+  applyBorderFillBtn.addEventListener('click', doApplyBorderFill);
+  clearFillBtn.addEventListener('click', () => {
+    state.step2.borderFill.fillResultData = null;
+    updateBorderStatus();
+    redrawStep2All();
+  });
+
+  // Step 2 drawing
+  let step2Drawing = false;
+  let step2LastPoint = null;
+
+  interactionCanvas2.addEventListener('mousedown', e => {
+    if (!state.prepared.width) return;
+    if (state.spaceDown || e.button === 2) {
+      state.panning2 = true;
+      state.panStart2 = { x: e.clientX, y: e.clientY, ox: state.view2.x, oy: state.view2.y };
+      return;
+    }
+    if (e.button !== 0) return;
+    const p = screenToWorld(e.clientX, e.clientY, paneEdit, state.view2);
+    if (!pointInsideRect(p, state.prepared.width, state.prepared.height)) return;
+    const tool = state.step2.tool;
+    const w = state.prepared.width, h = state.prepared.height;
+
+    if (tool === 'borderFloodFill') {
+      const bf = state.step2.borderFill;
+      if (!bf.borderData) return;
+      const sx = Math.floor(p.x), sy = Math.floor(p.y);
+      if (bf.borderData[sy * w + sx]) { updateBorderStatus('Clicked on border pixel. Click inside.'); return; }
+      bf.fillResultData = floodFillBinary(bf.borderData, w, h, sx, sy, bf.fillResultData);
+      updateBorderStatus('Flood fill done.');
+      redrawStep2All();
+      return;
+    }
+
+    if (tool === 'borderPatch') {
+      const bf = state.step2.borderFill;
+      if (!bf.borderData || !bf.borderCtx) return;
+      pushMaskUndo(bf.borderUndoStack, bf.borderCtx, w, h);
+      step2Drawing = true;
+      step2LastPoint = { x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) };
+      paintMaskLine(bf.borderCtx, step2LastPoint, step2LastPoint, 'brush', state.step2.brushSize);
+      syncBorderDataFromCanvas();
+      bf.isClosed = null;
+      updateBorderStatus('Patching... Re-check after done.');
+      redrawStep2All();
+      drawBrushCursor(interCtx2, interactionCanvas2.width, interactionCanvas2.height, step2LastPoint, 'brush', state.step2.brushSize);
+      return;
+    }
+
+    step2Drawing = true;
+    pushMaskUndo(state.step2.undoStack, maskDataCtx, w, h);
+    step2LastPoint = { x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) };
+    paintMaskLine(maskDataCtx, step2LastPoint, step2LastPoint, tool, state.step2.brushSize);
+    redrawStep2All();
+    drawBrushCursor(interCtx2, interactionCanvas2.width, interactionCanvas2.height, step2LastPoint, tool, state.step2.brushSize);
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (step2El.classList.contains('hidden')) return;
+    if (state.panning2) {
+      state.view2.x = state.panStart2.ox + (e.clientX - state.panStart2.x);
+      state.view2.y = state.panStart2.oy + (e.clientY - state.panStart2.y);
+      applyView2();
+      return;
+    }
+    const tool = state.step2.tool;
+    const w = state.prepared.width, h = state.prepared.height;
+    const p = screenToWorld(e.clientX, e.clientY, paneEdit, state.view2);
+
+    // Brush cursor (skip for flood fill tool)
+    if (tool !== 'borderFloodFill') {
+      const cursorTool = tool === 'borderPatch' ? 'brush' : tool;
+      if (pointInsideRect(p, w, h)) {
+        drawBrushCursor(interCtx2, interactionCanvas2.width, interactionCanvas2.height, p, cursorTool, state.step2.brushSize);
+      } else {
+        interCtx2.clearRect(0, 0, interactionCanvas2.width, interactionCanvas2.height);
+      }
+    } else {
+      interCtx2.clearRect(0, 0, interactionCanvas2.width, interactionCanvas2.height);
+    }
+
+    if (!step2Drawing) return;
+    const clamped = { x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) };
+
+    if (tool === 'borderPatch') {
+      const bf = state.step2.borderFill;
+      if (bf.borderCtx) {
+        paintMaskLine(bf.borderCtx, step2LastPoint, clamped, 'brush', state.step2.brushSize);
+        syncBorderDataFromCanvas();
+      }
+    } else {
+      paintMaskLine(maskDataCtx, step2LastPoint, clamped, tool, state.step2.brushSize);
+    }
+    step2LastPoint = clamped;
+    redrawStep2All();
+    if (tool !== 'borderFloodFill') {
+      const cursorTool = tool === 'borderPatch' ? 'brush' : tool;
+      drawBrushCursor(interCtx2, interactionCanvas2.width, interactionCanvas2.height, clamped, cursorTool, state.step2.brushSize);
+    }
+  });
+
+  window.addEventListener('mouseup', () => { state.panning2 = false; step2Drawing = false; });
+
+  const viewer2 = document.getElementById('viewer2');
+  setupPanZoom({
+    viewerEl: viewer2,
+    getView: () => state.view2,
+    applyTransform: applyView2,
+    minScale: 0.05, maxScale: 16
+  });
+
+  // ----- Global keys -----
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+      state.spaceDown = true;
+      interactionCanvas1.style.cursor = 'grab';
+      interactionCanvas2.style.cursor = 'grab';
+      e.preventDefault();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !step2El.classList.contains('hidden')) {
+      e.preventDefault();
+      if (state.step2.tool === 'borderPatch') {
+        const bf = state.step2.borderFill;
+        if (bf.borderCtx && popMaskUndo(bf.borderUndoStack, bf.borderCtx)) {
+          syncBorderDataFromCanvas();
+          bf.isClosed = null;
+          redrawStep2All();
+        }
+      } else {
+        if (popMaskUndo(state.step2.undoStack, maskDataCtx)) redrawStep2All();
+      }
+    }
+    if (!step2El.classList.contains('hidden')) {
+      if (e.key === '[') { state.step2.brushSize = Math.max(1, state.step2.brushSize - 2); brushSize2El.value = String(state.step2.brushSize); updateStatus2(); }
+      if (e.key === ']') { state.step2.brushSize = Math.min(256, state.step2.brushSize + 2); brushSize2El.value = String(state.step2.brushSize); updateStatus2(); }
+    }
+  });
+  window.addEventListener('keyup', e => {
+    if (e.code === 'Space') {
+      state.spaceDown = false;
+      interactionCanvas1.style.cursor = 'default';
+      interactionCanvas2.style.cursor = 'crosshair';
+    }
+  });
+
+  // ----- Init -----
+  updateStatus1('Ready');
+  updateStatus2('Ready');
+})();
+</script>
+</body>
+</html>

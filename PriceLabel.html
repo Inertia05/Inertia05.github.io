@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>价格标注工具</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f5f6f8;
+      color: #222;
+    }
+    .wrap {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 300px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .sidebar h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px 12px;
+      margin: 8px 0;
+      border: 1px solid #bbb;
+      background: #fff;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn:hover { background: #f0f3f8; }
+    .btn.primary {
+      background: #1f6feb;
+      color: #fff;
+      border-color: #1f6feb;
+    }
+    .btn.primary:hover {
+      background: #195ec5;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .btn-row .btn {
+      margin: 0;
+      flex: 1;
+    }
+    .hint, .status, .marks {
+      margin-top: 14px;
+      padding: 12px;
+      background: #f7f8fa;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .main {
+      flex: 1;
+      position: relative;
+      overflow: auto;
+      background: #e9ecf1;
+    }
+    .dropzone {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 22px;
+      border: 3px dashed #b8c1cc;
+      margin: 24px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.65);
+      text-align: center;
+      padding: 24px;
+    }
+    .canvas-wrap {
+      position: relative;
+      display: inline-block;
+      margin: 16px;
+      transform-origin: top left;
+    }
+    canvas {
+      display: block;
+      background: #fff;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+      cursor: crosshair;
+    }
+    .topbar {
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #444;
+    }
+    .hidden { display: none; }
+    .file-input { display: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <aside class="sidebar">
+      <h2>价格标注工具</h2>
+
+      <button class="btn primary" id="openBtn">打开图片</button>
+      <input class="file-input" type="file" id="fileInput" accept="image/*" />
+
+      <button class="btn" id="saveBtn">保存导出</button>
+      <button class="btn" id="undoBtn">撤销上一个冻结点</button>
+      <button class="btn" id="resetBtn">重置</button>
+      <button class="btn" id="clearBtn">清空图片</button>
+
+      <div class="btn-row">
+        <button class="btn" id="zoomOutBtn">缩小</button>
+        <button class="btn" id="zoomResetBtn">100%</button>
+        <button class="btn" id="zoomInBtn">放大</button>
+      </div>
+
+      <div class="hint">
+使用方法：
+1. 打开图片或直接拖进右侧区域
+2. 先点击两个已知价格位置
+3. 每点一次输入对应价格
+4. 标定后，移动鼠标可实时查看价格
+5. 再点击任意位置可冻结价格标记
+6. 点“撤销上一个冻结点”可回退
+7. 点“保存导出”保存成新 PNG
+
+缩放：
+- 按按钮放大/缩小
+- 鼠标滚轮也能缩放
+      </div>
+
+      <div class="status" id="statusBox">状态：未加载图片</div>
+      <div class="marks" id="marksBox">冻结标记：0</div>
+    </aside>
+
+    <main class="main" id="mainArea">
+      <div class="dropzone" id="dropzone">
+        把图片拖到这里<br />
+        或点击左侧“打开图片”
+      </div>
+
+      <div class="canvas-wrap hidden" id="canvasWrap">
+        <div class="topbar" id="liveInfo">x: -, y: -, price: -, zoom: 100%</div>
+        <canvas id="canvas"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const openBtn = document.getElementById('openBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const undoBtn = document.getElementById('undoBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const zoomResetBtn = document.getElementById('zoomResetBtn');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const fileInput = document.getElementById('fileInput');
+
+    const statusBox = document.getElementById('statusBox');
+    const marksBox = document.getElementById('marksBox');
+    const liveInfo = document.getElementById('liveInfo');
+
+    const mainArea = document.getElementById('mainArea');
+    const dropzone = document.getElementById('dropzone');
+    const canvasWrap = document.getElementById('canvasWrap');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let image = null;
+    let imageName = 'annotated';
+    let calibPoints = [];   // [{x,y,price}]
+    let frozenMarks = [];   // [{x,y,price}]
+    let mouse = null;
+
+    let zoom = 1.0;
+    const ZOOM_MIN = 0.2;
+    const ZOOM_MAX = 5.0;
+    const ZOOM_STEP = 1.1;
+
+    function setStatus(text) {
+      statusBox.textContent = text;
+    }
+
+    function updateMarksBox() {
+      if (frozenMarks.length === 0) {
+        marksBox.textContent = `冻结标记：0\n缩放：${Math.round(zoom * 100)}%`;
+        return;
+      }
+      const lines = frozenMarks.map((m, i) =>
+        `${i + 1}. x=${m.x}, y=${m.y}, price≈${m.price.toFixed(2)}`
+      );
+      marksBox.textContent =
+        `冻结标记：${frozenMarks.length}\n缩放：${Math.round(zoom * 100)}%\n` +
+        lines.join('\n');
+    }
+
+    function isCalibrated() {
+      return calibPoints.length === 2;
+    }
+
+    function yToPrice(y) {
+      if (!isCalibrated()) return null;
+      const p1 = calibPoints[0];
+      const p2 = calibPoints[1];
+      if (p1.y === p2.y) return null;
+      return p1.price + (y - p1.y) * (p2.price - p1.price) / (p2.y - p1.y);
+    }
+
+    function drawCircle(x, y, color, r = 5) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    function drawText(text, x, y, color, font = '16px Arial') {
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(text, x, y);
+      ctx.fillText(text, x, y);
+    }
+
+    function updateCanvasScale() {
+      canvasWrap.style.transform = `scale(${zoom})`;
+      updateMarksBox();
+      if (!image) {
+        liveInfo.textContent = `x: -, y: -, price: -, zoom: ${Math.round(zoom * 100)}%`;
+      } else if (!mouse) {
+        liveInfo.textContent = `x: -, y: -, price: -, zoom: ${Math.round(zoom * 100)}%`;
+      }
+    }
+
+    function redraw() {
+      if (!image) {
+        liveInfo.textContent = `x: -, y: -, price: -, zoom: ${Math.round(zoom * 100)}%`;
+        return;
+      }
+
+      canvas.width = image.width;
+      canvas.height = image.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0);
+
+      calibPoints.forEach((p, i) => {
+        drawCircle(p.x, p.y, 'red', 6);
+        drawText(
+          `C${i + 1}: y=${p.y}, p=${p.price.toFixed(2)}`,
+          p.x + 10,
+          p.y - 10,
+          'red',
+          '15px Arial'
+        );
+      });
+
+      frozenMarks.forEach((m) => {
+        drawCircle(m.x, m.y, '#0066ff', 5);
+        ctx.beginPath();
+        ctx.moveTo(m.x, m.y);
+        ctx.lineTo(m.x + 60, m.y - 20);
+        ctx.strokeStyle = '#0066ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        drawText(m.price.toFixed(2), m.x + 65, m.y - 22, '#0066ff', '16px Arial');
+      });
+
+      if (mouse) {
+        const { x, y } = mouse;
+        if (isCalibrated()) {
+          const price = yToPrice(y);
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.strokeStyle = 'orange';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          drawCircle(x, y, 'orange', 4);
+          liveInfo.textContent =
+            `x: ${x}, y: ${y}, price: ${price.toFixed(2)}, zoom: ${Math.round(zoom * 100)}%`;
+        } else {
+          liveInfo.textContent =
+            `x: ${x}, y: ${y}, price: 未标定, zoom: ${Math.round(zoom * 100)}%`;
+        }
+      } else {
+        liveInfo.textContent = `x: -, y: -, price: -, zoom: ${Math.round(zoom * 100)}%`;
+      }
+
+      updateMarksBox();
+      updateCanvasScale();
+    }
+
+    function resetAllMarks() {
+      calibPoints = [];
+      frozenMarks = [];
+      mouse = null;
+      if (image) {
+        setStatus('状态：已重置标定和冻结标记');
+      } else {
+        setStatus('状态：未加载图片');
+      }
+      redraw();
+    }
+
+    function clearImage() {
+      image = null;
+      imageName = 'annotated';
+      calibPoints = [];
+      frozenMarks = [];
+      mouse = null;
+      zoom = 1.0;
+      canvas.width = 0;
+      canvas.height = 0;
+      canvasWrap.classList.add('hidden');
+      dropzone.classList.remove('hidden');
+      setStatus('状态：未加载图片');
+      updateMarksBox();
+      liveInfo.textContent = 'x: -, y: -, price: -, zoom: 100%';
+      updateCanvasScale();
+    }
+
+    function loadFile(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        alert('请选择图片文件');
+        return;
+      }
+
+      imageName = file.name.replace(/\.[^.]+$/, '') || 'annotated';
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          image = img;
+          calibPoints = [];
+          frozenMarks = [];
+          mouse = null;
+          zoom = 1.0;
+
+          canvasWrap.classList.remove('hidden');
+          dropzone.classList.add('hidden');
+
+          setStatus(`状态：已加载图片\n文件名：${file.name}\n尺寸：${img.width} x ${img.height}`);
+          redraw();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function askPriceInput(index) {
+      while (true) {
+        const text = prompt(`请输入第 ${index} 个标定点对应的价格：`);
+        if (text === null) return null;
+        const value = Number(text);
+        if (!Number.isNaN(value) && Number.isFinite(value)) {
+          return value;
+        }
+        alert('请输入有效数字');
+      }
+    }
+
+    function saveImage() {
+      if (!image) {
+        alert('还没有加载图片');
+        return;
+      }
+
+      const oldMouse = mouse;
+      mouse = null;
+      redraw();
+
+      const link = document.createElement('a');
+      const safeName = `${imageName}_annotated.png`;
+      link.download = safeName;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+
+      mouse = oldMouse;
+      redraw();
+
+      setStatus(`状态：已导出图片\n文件名：${safeName}`);
+    }
+
+    function undoLastFrozenMark() {
+      if (frozenMarks.length === 0) {
+        setStatus('状态：没有可撤销的冻结点');
+        return;
+      }
+      const removed = frozenMarks.pop();
+      setStatus(
+        `状态：已撤销上一个冻结点\nx=${removed.x}, y=${removed.y}, price≈${removed.price.toFixed(2)}`
+      );
+      redraw();
+    }
+
+    function changeZoom(factor) {
+      if (!image) return;
+      zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * factor));
+      redraw();
+    }
+
+    function setZoom(value) {
+      if (!image) return;
+      zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+      redraw();
+    }
+
+    function getCanvasCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.round((e.clientX - rect.left) * (canvas.width / rect.width));
+      const y = Math.round((e.clientY - rect.top) * (canvas.height / rect.height));
+      return {
+        x: Math.max(0, Math.min(canvas.width - 1, x)),
+        y: Math.max(0, Math.min(canvas.height - 1, y)),
+      };
+    }
+
+    openBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) loadFile(file);
+      fileInput.value = '';
+    });
+
+    saveBtn.addEventListener('click', saveImage);
+    undoBtn.addEventListener('click', undoLastFrozenMark);
+    resetBtn.addEventListener('click', resetAllMarks);
+    clearBtn.addEventListener('click', clearImage);
+
+    zoomInBtn.addEventListener('click', () => changeZoom(ZOOM_STEP));
+    zoomOutBtn.addEventListener('click', () => changeZoom(1 / ZOOM_STEP));
+    zoomResetBtn.addEventListener('click', () => setZoom(1.0));
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!image) return;
+      mouse = getCanvasCoords(e);
+      redraw();
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      mouse = null;
+      redraw();
+    });
+
+    canvas.addEventListener('click', (e) => {
+      if (!image) return;
+      const { x, y } = getCanvasCoords(e);
+
+      if (!isCalibrated()) {
+        const price = askPriceInput(calibPoints.length + 1);
+        if (price === null) return;
+        calibPoints.push({ x, y, price });
+
+        if (isCalibrated()) {
+          setStatus(
+            `状态：标定完成\n` +
+            `点1: y=${calibPoints[0].y}, p=${calibPoints[0].price}\n` +
+            `点2: y=${calibPoints[1].y}, p=${calibPoints[1].price}`
+          );
+        } else {
+          setStatus('状态：已记录第 1 个标定点，请再点第 2 个');
+        }
+
+        redraw();
+        return;
+      }
+
+      const price = yToPrice(y);
+      frozenMarks.push({ x, y, price });
+      setStatus(`状态：已冻结标记，x=${x}, y=${y}, price≈${price.toFixed(2)}`);
+      redraw();
+    });
+
+    mainArea.addEventListener('wheel', (e) => {
+      if (!image) return;
+      if (!e.ctrlKey && e.target !== canvas) return;
+      e.preventDefault();
+
+      if (e.deltaY < 0) {
+        changeZoom(ZOOM_STEP);
+      } else {
+        changeZoom(1 / ZOOM_STEP);
+      }
+    }, { passive: false });
+
+    ['dragenter', 'dragover'].forEach(evt => {
+      mainArea.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.borderColor = '#1f6feb';
+        dropzone.style.background = 'rgba(31,111,235,0.08)';
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      mainArea.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.borderColor = '#b8c1cc';
+        dropzone.style.background = 'rgba(255,255,255,0.65)';
+      });
+    });
+
+    mainArea.addEventListener('drop', (e) => {
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
+
+    updateMarksBox();
+    updateCanvasScale();
+  </script>
+</body>
+</html>
