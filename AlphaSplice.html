@@ -169,6 +169,9 @@
         Drag two image files here.
         <div class="small">Supports PNG and common 8-bit indexed / 24-bit / 32-bit TGA.</div>
       </div>
+      <div class="row">
+        <button id="loadDemoBtn">Load demo samples</button>
+      </div>
     </div>
 
     <div class="group">
@@ -693,6 +696,24 @@
   setupDropZone(dropZone1, viewer1, '#5aa2ff', async files => {
     if (files[0]) await loadToSlot(files[0], 'A');
     if (files[1]) await loadToSlot(files[1], 'B');
+  });
+
+  document.getElementById('loadDemoBtn').addEventListener('click', async () => {
+    try {
+      const [a, b, c] = await Promise.all([
+        readImageFromURL('SampleA.tga'),
+        readImageFromURL('SampleB.tga'),
+        readImageFromURL('SampleC.tga')
+      ]);
+      state.imgA = a;
+      state.imgB = b;
+      state.step2.borderFill.sourceImage = c;
+      updateBorderStatus('Border image loaded (SampleC). Click Extract.');
+      redrawStep1();
+      doFitView1();
+    } catch (e) {
+      alert('Failed to load demo samples. Make sure SampleA/B/C.tga exist.');
+    }
   });
 
   baseSelect.addEventListener('change', () => {
