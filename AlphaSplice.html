@@ -171,6 +171,7 @@
       </div>
       <div class="row">
         <button id="loadDemoBtn">Load demo samples</button>
+        <span id="demoStatus" class="small"></span>
       </div>
     </div>
 
@@ -698,7 +699,9 @@
     if (files[1]) await loadToSlot(files[1], 'B');
   });
 
+  const demoStatusEl = document.getElementById('demoStatus');
   document.getElementById('loadDemoBtn').addEventListener('click', async () => {
+    demoStatusEl.textContent = 'Loading...';
     try {
       const [a, b, c] = await Promise.all([
         readImageFromURL('SampleA.tga'),
@@ -708,11 +711,12 @@
       state.imgA = a;
       state.imgB = b;
       state.step2.borderFill.sourceImage = c;
+      demoStatusEl.textContent = 'A: SampleA.tga, B: SampleB.tga, Border: SampleC.tga';
       updateBorderStatus('Border image loaded (SampleC). Click Extract.');
       redrawStep1();
       doFitView1();
     } catch (e) {
-      alert('Failed to load demo samples. Make sure SampleA/B/C.tga exist.');
+      demoStatusEl.textContent = 'Failed to load. Requires HTTP server.';
     }
   });
 
